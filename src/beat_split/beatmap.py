@@ -1,8 +1,8 @@
 """Beat map: every beat of a track, detected once and stored as JSON next to it.
 
 Splitting reads the map instead of tracking again, so the map can be inspected
-first (intro, fills, breaks) and reused for files that share the timing, such
-as the stems of the analysed mix.
+first (intro, fills, breaks, section starts), edited, and reused for files that
+share the timing, such as the stems of the analysed mix.
 """
 from __future__ import annotations
 
@@ -15,9 +15,15 @@ from scipy import signal
 from bpm_lock.audio_io import Audio
 from bpm_lock.beats import DynamicProgrammingBeatTracker, TrackerConfig
 
-FORMAT = 1
+from . import sections
+
+FORMAT = 2
 SUFFIX = ".beats.json"
 NARROW = 1.10   # tracking range around a given tempo, as in bpm-lock
+
+
+class FormatError(ValueError):
+    """The map was written by an older version; analyse again."""
 
 
 @dataclass(frozen=True)
@@ -28,6 +34,7 @@ class BeatMap:
     beats: np.ndarray       # beat times in seconds, ascending
     reliable: np.ndarray    # bool per beat; False where a fill or break was rebuilt
     offset: float = 0.0     # seconds added to the tracked beats to reach the attacks
+    sections: tuple[int, ...] = ()   # 0-based beats where a fuller section starts
 
     def rebuilt_runs(self) -> list[tuple[int, int]]:
         """(first, last) 0-based beat indices of each stretch rebuilt by the tracker."""
@@ -49,20 +56,25 @@ class BeatMap:
         return {"format": FORMAT, "source": self.source, "duration": round(self.duration, 6),
                 "tempo": round(self.tempo, 3), "offset": round(self.offset, 4),
                 "beats": [round(float(t), 6) for t in self.beats],
-                "reliable": [bool(r) for r in self.reliable]}
+                "reliable": [bool(r) for r in self.reliable],
+                "sections": [i + 1 for i in self.sections]}
 
     @classmethod
     def from_dict(cls, data: dict) -> "BeatMap":
         if data.get("format") != FORMAT:
-            raise ValueError(f"unsupported beat map format: {data.get('format')!r}")
+            raise FormatError(f"beat map format {data.get('format')!r} is not {FORMAT}; "
+                              "run 'beat-split analyze' again")
         beats = np.asarray(data["beats"], dtype=float)
         reliable = np.asarray(data.get("reliable", [True] * len(beats)), dtype=bool)
         if len(beats) != len(reliable):
             raise ValueError("beat map: 'beats' and 'reliable' differ in length")
         if len(beats) == 0 or np.any(np.diff(beats) <= 0):
             raise ValueError("beat map: 'beats' must be a non-empty, ascending list")
+        numbers = data.get("sections", [])
+        if any(not isinstance(n, int) or not 1 <= n <= len(beats) for n in numbers):
+            raise ValueError(f"beat map: 'sections' must hold beat numbers 1-{len(beats)}")
         return cls(data["source"], float(data["duration"]), float(data["tempo"]), beats, reliable,
-                   float(data.get("offset", 0.0)))
+                   float(data.get("offset", 0.0)), tuple(sorted({n - 1 for n in numbers})))
 
 
 def default_path(audio_path: Path) -> Path:
@@ -84,7 +96,8 @@ def analyse(audio: Audio, source: str, bpm: float | None = None,
     The tracked hit positions (`repaired`) are used, not the smoothed tempo
     curve, which can sit up to ~30 ms off a hit. The tracker places hits a
     track-dependent 0-40 ms before the attack, so that lag is measured and added
-    (see `attack_offset`); the stored beats are the cut points.
+    (see `attack_offset`); the stored beats are the cut points. Section starts
+    are detected on those beats (see `sections`).
     """
     if bpm:
         config = TrackerConfig(bpm_hint=bpm, bpm_min=bpm / NARROW, bpm_max=bpm * NARROW)
@@ -96,8 +109,9 @@ def analyse(audio: Audio, source: str, bpm: float | None = None,
     offset = attack_offset(mono, audio.sample_rate, beats[result.reliable])
     beats = beats + offset
     keep = (beats >= 0) & (beats < audio.duration)
-    return BeatMap(source, audio.duration, float(result.tempo), beats[keep],
-                   result.reliable[keep], offset)
+    beats = beats[keep]
+    return BeatMap(source, audio.duration, float(result.tempo), beats, result.reliable[keep],
+                   offset, tuple(sections.detect(audio, beats)))
 
 
 ATTACK_WINDOW = (0.05, 0.10)   # seconds searched before/after a tracked beat

@@ -4,6 +4,19 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-11-20
+
+### Added
+- Section starts: `analyze` detects beats where the music clearly re-enters
+  after a break or an interlude and lists them; `split` restarts the count
+  there, so the chunk before ends early instead of mixing the interlude with
+  the next section. Chunks that start a section are marked `new section`.
+- `--no-sections` to count straight through.
+
+### Changed
+- Beat map format 2 adds `sections` (beat numbers, editable). `split` analyses
+  files again whose map is format 1; `--map` with a format 1 map is rejected.
+
 ## [0.1.0] - 2026-11-20
 
 ### Added

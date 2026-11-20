@@ -57,10 +57,12 @@ def _overview(name: str, m: BeatMap) -> str:
     if m.beats[0] >= splitter.MIN_LEAD_IN:
         lines.append(f"  lead-in          {_clock(0)}-{_clock(m.beats[0])}")
     shown, hidden = _rebuilt_stretches(m)
-    for first, last in shown:
-        lines.append(f"  rebuilt  {first + 1:>4}-{last + 1:<4} {_clock(m.beats[first])}-"
-                     f"{_clock(m.beats[last])}  fill or break: beats placed at the "
-                     f"surrounding tempo")
+    rows = [(first, f"  rebuilt  {first + 1:>4}-{last + 1:<4} {_clock(m.beats[first])}-"
+                    f"{_clock(m.beats[last])}  fill or break: beats placed at the "
+                    f"surrounding tempo") for first, last in shown]
+    rows += [(i, f"  section  {i + 1:>4}      {_clock(m.beats[i])}  "
+                 f"{' ' * 10}new section: the count restarts here") for i in m.sections]
+    lines += [text for _, text in sorted(rows)]
     if hidden:
         lines.append(f"  ({hidden} shorter rebuilt stretches of 1-{MIN_LISTED - 1} beats "
                      f"not listed; all beats are in the map)")
@@ -92,7 +94,10 @@ def _map_for(path: Path, args) -> BeatMap:
         return beatmap.load(args.map)
     existing = beatmap.default_path(path)
     if existing.exists() and not args.reanalyze:
-        return beatmap.load(existing)
+        try:
+            return beatmap.load(existing)
+        except beatmap.FormatError:
+            print(f"{existing.name}: written by an older version, analysing again")
     return _analyse(path, args)
 
 
@@ -102,8 +107,9 @@ def _split_one(path: Path, args) -> None:
     if abs(audio.duration - beat_map.duration) > MAX_DURATION_MISMATCH:
         raise ValueError(f"is {audio.duration:.3f} s long, but the beat map of "
                          f"{beat_map.source} covers {beat_map.duration:.3f} s")
-    starts = [_parse_start(s, beat_map) for s in args.start]
-    chunks = splitter.plan(beat_map.beats, audio.duration, args.beats, starts)
+    starts = [_parse_start(s, beat_map) for s in args.start] or [0]
+    sections = [] if args.no_sections else [i for i in beat_map.sections if i > min(starts)]
+    chunks = splitter.plan(beat_map.beats, audio.duration, args.beats, starts + sections)
 
     ext = f".{args.format}" if args.format else path.suffix
     out_dir = args.out_dir or path.parent / f"{path.stem}_beats{args.beats}"
@@ -129,6 +135,8 @@ def _split_one(path: Path, args) -> None:
             label = f"beats {chunk.first_beat}-{chunk.first_beat + chunk.beats - 1}"
             if chunk.beats != args.beats:
                 label += f" ({chunk.beats} beats)"
+            if chunk.first_beat - 1 in sections:
+                label += "  new section"
         print(f"  {chunk.index:0{width}d}  {_clock(chunk.start)}-{_clock(chunk.end)}  {label}")
 
 
@@ -166,7 +174,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("-s", "--start", action="append", default=[], metavar="BEAT|TIME",
                     help="beat to start counting from: a beat number (33) or a time "
                          "(1:02.5) that snaps to the nearest beat; repeat to restart "
-                         "the count, e.g. after a break (default: beat 1)")
+                         "the count by hand (default: beat 1)")
+    sp.add_argument("--no-sections", action="store_true",
+                    help="ignore the section starts in the beat map; count straight through")
     sp.add_argument("-m", "--map", type=Path,
                     help="beat map to use for all files, e.g. the mix's map for its stems")
     sp.add_argument("--reanalyze", action="store_true",

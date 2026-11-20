@@ -1,2 +1,2 @@
 """beat-split: split audio tracks into chunks of a fixed number of beats."""
-__version__ = "0.1.0"
+__version__ = "0.2.0"

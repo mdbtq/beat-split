@@ -19,8 +19,10 @@ from beat_split.cli import main
 SR = 44100
 
 
-def drum_track(bpm: float = 128.0, lead_in: float = 1.0, duration: float = 24.0) -> tuple[Audio, np.ndarray]:
-    """Kick on 1+3, snare on 2+4, 8th hats after a quiet lead-in. Returns (audio, beat times)."""
+def drum_track(bpm: float = 128.0, lead_in: float = 1.0, duration: float = 24.0,
+               interlude: range = range(0)) -> tuple[Audio, np.ndarray]:
+    """Kick on 1+3, snare on 2+4, 8th hats after a quiet lead-in; only soft hats on
+    the 0-based beats in `interlude`. Returns (audio, beat times)."""
     rng = np.random.default_rng(1)
     y = np.zeros(int(duration * SR), np.float32)
     n = np.arange(int(0.2 * SR)) / SR
@@ -35,6 +37,9 @@ def drum_track(bpm: float = 128.0, lead_in: float = 1.0, duration: float = 24.0)
 
     beats = np.arange(lead_in, duration - 0.5, 60 / bpm)
     for i, t in enumerate(beats):
+        if i in interlude:
+            add(hat * 0.5, t)
+            continue
         add(kick if i % 2 == 0 else snare, t)
         add(hat, t)
         add(hat * 0.6, t + 30 / bpm)
@@ -98,6 +103,23 @@ class CutTest(unittest.TestCase):
         self.assertEqual(out.samples[0, SR // 2], 1.0)
 
 
+class SectionTest(unittest.TestCase):
+    def test_finds_reentry_after_interlude(self):
+        # 32 beats, a 6-beat interlude (beats 33-38), then a new section from beat 39
+        audio, truth = drum_track(duration=36.0, interlude=range(32, 38))
+        m = beatmap.analyse(audio, "song.wav")
+        self.assertEqual(len(m.beats), len(truth))
+        self.assertEqual(list(m.sections), [38])
+        chunks = splitter.plan(m.beats, audio.duration, 16, [0, *m.sections])
+        self.assertEqual([(c.first_beat, c.beats) for c in chunks[1:4]],
+                         [(1, 16), (17, 16), (33, 6)])
+        self.assertEqual(chunks[4].first_beat, 39)
+
+    def test_steady_track_has_no_sections(self):
+        audio, _ = drum_track()
+        self.assertEqual(beatmap.analyse(audio, "loop.wav").sections, ())
+
+
 class BeatMapTest(unittest.TestCase):
     def test_tracks_every_beat_before_its_attack(self):
         audio, truth = drum_track()
@@ -110,15 +132,23 @@ class BeatMapTest(unittest.TestCase):
 
     def test_round_trip(self):
         m = beatmap.BeatMap("x.wav", 10.0, 120.0, np.array([0.5, 1.0, 1.5]),
-                            np.array([True, False, True]))
-        again = beatmap.BeatMap.from_dict(m.to_dict())
+                            np.array([True, False, True]), 0.01, (2,))
+        data = m.to_dict()
+        self.assertEqual(data["sections"], [3])        # stored as beat numbers
+        again = beatmap.BeatMap.from_dict(data)
         np.testing.assert_array_equal(again.beats, m.beats)
+        self.assertEqual(again.sections, (2,))
         self.assertEqual(again.rebuilt_runs(), [(1, 1)])
 
     def test_rejects_unsorted_beats(self):
         with self.assertRaises(ValueError):
-            beatmap.BeatMap.from_dict({"format": 1, "source": "x", "duration": 2, "tempo": 120,
+            beatmap.BeatMap.from_dict({"format": 2, "source": "x", "duration": 2, "tempo": 120,
                                        "beats": [1.0, 0.5]})
+
+    def test_old_format_asks_for_new_analysis(self):
+        with self.assertRaises(beatmap.FormatError):
+            beatmap.BeatMap.from_dict({"format": 1, "source": "x", "duration": 2, "tempo": 120,
+                                       "beats": [0.5, 1.0]})
 
 
 @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg not installed")
@@ -166,3 +196,13 @@ class CliTest(unittest.TestCase):
         chunks = [f for f in (self.dir / "loop_beats4").iterdir() if f.suffix == ".wav"]
         self.assertEqual(len(chunks), len(out.splitlines()) - 1)
         self.assertTrue(keep.exists())
+
+    def test_split_restarts_count_at_section(self):
+        audio, _ = drum_track(duration=36.0, interlude=range(32, 38))
+        src = self.dir / "song.wav"
+        audio_io.write(src, audio)
+        out = self.run_cli("split", src, "-n", 16)
+        self.assertIn("beats 33-38 (6 beats)", out)
+        self.assertIn("beats 39-54  new section", out)
+        out = self.run_cli("split", src, "-n", 16, "--no-sections")
+        self.assertIn("beats 33-48", out)
