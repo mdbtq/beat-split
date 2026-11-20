@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "beat-split"
+dynamic = ["version"]
+description = "Split audio tracks into chunks of a fixed number of beats"
+requires-python = ">=3.10"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "MDBTQ"}]
+dependencies = [
+    "bpm-lock @ git+https://github.com/mdbtq/bpm-lock@v1.2.2",  # beat tracker and ffmpeg I/O
+    "numpy>=1.24",
+    "scipy>=1.10",
+]
+
+[project.scripts]
+beat-split = "beat_split.cli:main"
+
+[project.urls]
+Repository = "https://github.com/mdbtq/beat-split"
+
+[tool.setuptools.dynamic]
+version = {attr = "beat_split.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
