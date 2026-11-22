@@ -17,7 +17,7 @@ from bpm_lock.beats import DynamicProgrammingBeatTracker, TrackerConfig
 
 from . import sections
 
-FORMAT = 2
+FORMAT = 3
 SUFFIX = ".beats.json"
 NARROW = 1.10   # tracking range around a given tempo, as in bpm-lock
 
@@ -35,6 +35,8 @@ class BeatMap:
     reliable: np.ndarray    # bool per beat; False where a fill or break was rebuilt
     offset: float = 0.0     # seconds added to the tracked beats to reach the attacks
     sections: tuple[int, ...] = ()   # 0-based beats where a fuller section starts
+    downbeat: int = 0       # 0-based first downbeat: bar lines and the default count start
+    bar: int = 4            # beats per bar
 
     def rebuilt_runs(self) -> list[tuple[int, int]]:
         """(first, last) 0-based beat indices of each stretch rebuilt by the tracker."""
@@ -57,6 +59,7 @@ class BeatMap:
                 "tempo": round(self.tempo, 3), "offset": round(self.offset, 4),
                 "beats": [round(float(t), 6) for t in self.beats],
                 "reliable": [bool(r) for r in self.reliable],
+                "downbeat": self.downbeat + 1, "bar": self.bar,
                 "sections": [i + 1 for i in self.sections]}
 
     @classmethod
@@ -73,8 +76,14 @@ class BeatMap:
         numbers = data.get("sections", [])
         if any(not isinstance(n, int) or not 1 <= n <= len(beats) for n in numbers):
             raise ValueError(f"beat map: 'sections' must hold beat numbers 1-{len(beats)}")
+        downbeat, bar = data.get("downbeat", 1), data.get("bar", 4)
+        if not isinstance(downbeat, int) or not 1 <= downbeat <= len(beats):
+            raise ValueError(f"beat map: 'downbeat' must be a beat number 1-{len(beats)}")
+        if not isinstance(bar, int) or bar < 1:
+            raise ValueError("beat map: 'bar' must be a whole number of beats, at least 1")
         return cls(data["source"], float(data["duration"]), float(data["tempo"]), beats, reliable,
-                   float(data.get("offset", 0.0)), tuple(sorted({n - 1 for n in numbers})))
+                   float(data.get("offset", 0.0)), tuple(sorted({n - 1 for n in numbers})),
+                   downbeat - 1, bar)
 
 
 def default_path(audio_path: Path) -> Path:
@@ -89,15 +98,16 @@ def load(path: Path) -> BeatMap:
     return BeatMap.from_dict(json.loads(path.read_text()))
 
 
-def analyse(audio: Audio, source: str, bpm: float | None = None,
-            hint: float = 120.0) -> BeatMap:
+def analyse(audio: Audio, source: str, bpm: float | None = None, hint: float = 120.0,
+            downbeat: int = 0, bar: int = 4) -> BeatMap:
     """Track every beat with bpm-lock's tracker and move it onto the attack.
 
     The tracked hit positions (`repaired`) are used, not the smoothed tempo
     curve, which can sit up to ~30 ms off a hit. The tracker places hits a
     track-dependent 0-40 ms before the attack, so that lag is measured and added
     (see `attack_offset`); the stored beats are the cut points. Section starts
-    are detected on those beats (see `sections`).
+    are detected on those beats and placed on bar lines of `bar` beats through
+    the 0-based `downbeat` (see `sections`).
     """
     if bpm:
         config = TrackerConfig(bpm_hint=bpm, bpm_min=bpm / NARROW, bpm_max=bpm * NARROW)
@@ -110,8 +120,10 @@ def analyse(audio: Audio, source: str, bpm: float | None = None,
     beats = beats + offset
     keep = (beats >= 0) & (beats < audio.duration)
     beats = beats[keep]
+    if not 0 <= downbeat < len(beats):
+        raise ValueError(f"downbeat must be a beat number 1-{len(beats)}")
     return BeatMap(source, audio.duration, float(result.tempo), beats, result.reliable[keep],
-                   offset, tuple(sections.detect(audio, beats)))
+                   offset, tuple(sections.detect(audio, beats, downbeat, bar)), downbeat, bar)
 
 
 ATTACK_WINDOW = (0.05, 0.10)   # seconds searched before/after a tracked beat

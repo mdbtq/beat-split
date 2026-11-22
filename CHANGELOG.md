@@ -4,6 +4,20 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-11-22
+
+### Added
+- `--downbeat BEAT` and `--bar BEATS` (`analyze` and `split`): the bar grid
+  that section starts are placed on. `split` counts from the downbeat by
+  default. Both are stored in the beat map.
+
+### Changed
+- Section starts land on a bar line. A drum lead-in into a section no longer
+  starts the new chunk: a detected start halfway between two bar lines goes to
+  the later one, so the lead-in stays at the end of the chunk before.
+- Beat map format 3 adds `downbeat` and `bar`. `split` analyses files again
+  whose map is older or was made with another `--downbeat`/`--bar`.
+
 ## [0.2.0] - 2026-11-20
 
 ### Added

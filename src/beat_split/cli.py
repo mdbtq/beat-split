@@ -53,7 +53,8 @@ def _rebuilt_stretches(m: BeatMap) -> tuple[list[tuple[int, int]], int]:
 def _overview(name: str, m: BeatMap) -> str:
     lines = [f"{name}: {m.tempo:.2f} BPM, {len(m.beats)} beats, "
              f"first beat {_clock(m.beats[0])}, last beat {_clock(m.beats[-1])}, "
-             f"cuts {m.offset * 1000:+.0f} ms from the tracked beats"]
+             f"cuts {m.offset * 1000:+.0f} ms from the tracked beats, "
+             f"bars of {m.bar} from beat {m.downbeat + 1}"]
     if m.beats[0] >= splitter.MIN_LEAD_IN:
         lines.append(f"  lead-in          {_clock(0)}-{_clock(m.beats[0])}")
     shown, hidden = _rebuilt_stretches(m)
@@ -70,7 +71,9 @@ def _overview(name: str, m: BeatMap) -> str:
 
 
 def _analyse(path: Path, args) -> BeatMap:
-    beat_map = beatmap.analyse(audio_io.read(path), path.name, args.bpm, args.hint)
+    downbeat = (args.downbeat or 1) - 1
+    beat_map = beatmap.analyse(audio_io.read(path), path.name, args.bpm, args.hint,
+                               downbeat, args.bar or 4)
     out = beatmap.default_path(path)
     beatmap.save(beat_map, out)
     print(_overview(path.name, beat_map))
@@ -89,15 +92,29 @@ def cmd_analyze(args) -> int:
     return 1 if failed else 0
 
 
+def _grid_differs(m: BeatMap, args) -> bool:
+    """--downbeat or --bar given and not what the map was analysed with."""
+    return bool((args.downbeat and args.downbeat - 1 != m.downbeat)
+                or (args.bar and args.bar != m.bar))
+
+
 def _map_for(path: Path, args) -> BeatMap:
     if args.map:
-        return beatmap.load(args.map)
+        m = beatmap.load(args.map)
+        if _grid_differs(m, args):
+            raise ValueError(f"{args.map.name} was analysed with bars of {m.bar} from beat "
+                             f"{m.downbeat + 1}; analyse the mix again with --downbeat/--bar")
+        return m
     existing = beatmap.default_path(path)
     if existing.exists() and not args.reanalyze:
         try:
-            return beatmap.load(existing)
+            m = beatmap.load(existing)
         except beatmap.FormatError:
             print(f"{existing.name}: written by an older version, analysing again")
+        else:
+            if not _grid_differs(m, args):
+                return m
+            print(f"{existing.name}: other --downbeat/--bar, analysing again")
     return _analyse(path, args)
 
 
@@ -107,7 +124,7 @@ def _split_one(path: Path, args) -> None:
     if abs(audio.duration - beat_map.duration) > MAX_DURATION_MISMATCH:
         raise ValueError(f"is {audio.duration:.3f} s long, but the beat map of "
                          f"{beat_map.source} covers {beat_map.duration:.3f} s")
-    starts = [_parse_start(s, beat_map) for s in args.start] or [0]
+    starts = [_parse_start(s, beat_map) for s in args.start] or [beat_map.downbeat]
     sections = [] if args.no_sections else [i for i in beat_map.sections if i > min(starts)]
     chunks = splitter.plan(beat_map.beats, audio.duration, args.beats, starts + sections)
 
@@ -155,6 +172,11 @@ def _add_tracking(p: argparse.ArgumentParser) -> None:
     p.add_argument("-b", "--bpm", type=float, help="known tempo; narrows detection to ±10%%")
     p.add_argument("--hint", type=float, default=120.0,
                    help="detection prior when --bpm is not given (default 120)")
+    p.add_argument("--downbeat", type=int, metavar="BEAT",
+                   help="beat number of the first downbeat (default 1); bar lines for "
+                        "section starts are counted from it, and split counts from it")
+    p.add_argument("--bar", type=int, metavar="BEATS",
+                   help="beats per bar (default 4); section starts land on bar lines")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -174,7 +196,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("-s", "--start", action="append", default=[], metavar="BEAT|TIME",
                     help="beat to start counting from: a beat number (33) or a time "
                          "(1:02.5) that snaps to the nearest beat; repeat to restart "
-                         "the count by hand (default: beat 1)")
+                         "the count by hand (default: the downbeat, beat 1)")
     sp.add_argument("--no-sections", action="store_true",
                     help="ignore the section starts in the beat map; count straight through")
     sp.add_argument("-m", "--map", type=Path,
