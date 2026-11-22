@@ -121,6 +121,11 @@ for a track that was not recorded to a click, or to get the section markers.
   jitter included.
 - Audio before the first downbeat becomes a pickup bar of sixteenth notes
   (`1/16` in the example, 0.1 s), so bar 2 starts exactly on the downbeat.
+- The audio must stay fixed in time while the tempo map comes in. In REAPER,
+  set the audio item's timebase to Time first (Item Properties, F2, or for the
+  whole project in File > Project Settings). With a beats timebase REAPER
+  stretches the audio along with the imported tempo, so it plays faster or
+  slower and the grid no longer matches.
 - DAWs import a tempo map from a MIDI file in different ways (REAPER, Logic
   and Cubase can). Check that the grid follows the audio after importing, and
   whether the markers arrive as project markers.
