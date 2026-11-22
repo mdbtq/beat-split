@@ -19,10 +19,10 @@ Beat tracking comes from [bpm-lock](https://github.com/mdbtq/bpm-lock).
 ## Install
 
 ```bash
-uv tool install git+https://github.com/mdbtq/beat-split@v0.4.0
+uv tool install git+https://github.com/mdbtq/beat-split@v0.5.0
 ```
 
-Or with pipx: `pipx install git+https://github.com/mdbtq/beat-split@v0.4.0`.
+Or with pipx: `pipx install git+https://github.com/mdbtq/beat-split@v0.5.0`.
 From a local checkout: `make build/install`.
 
 ## Usage
@@ -35,6 +35,7 @@ beat-split split track.wav -n 16 -s 1 -s 0:42.3   # restart the count by hand
 beat-split split track.wav -n 16 --no-sections     # count straight through
 beat-split split stems/*.wav -n 16 -m track.wav.beats.json   # stems, cut like the mix
 beat-split export track.wav                   # MIDI tempo map + section markers for a DAW
+beat-split export track.wav --reaper          # ... plus a ReaScript for REAPER project markers
 ```
 
 `split` and `export` use `<file>.beats.json` when it exists and analyse the
@@ -127,8 +128,13 @@ for a track that was not recorded to a click, or to get the section markers.
   stretches the audio along with the imported tempo, so it plays faster or
   slower and the grid no longer matches.
 - DAWs import a tempo map from a MIDI file in different ways (REAPER, Logic
-  and Cubase can). Check that the grid follows the audio after importing, and
-  whether the markers arrive as project markers.
+  and Cubase can). Check that the grid follows the audio after importing.
+- REAPER shows the MIDI file's markers inside the MIDI item only, not as
+  project markers. `--reaper` also writes `<name>.markers.lua`, a ReaScript
+  that adds them as project markers at the same times. Select the audio item,
+  then run the script (Actions > Show action list > New action > Load
+  ReaScript): the markers are placed relative to the item's start, or to the
+  project start when nothing is selected.
 
 ### Section starts
 
@@ -191,6 +197,7 @@ tempo with bpm-lock first and split its output.
 | `-f, --format` | as input | `wav`, `flac`, `aiff`, `mp3`, `m4a`, `ogg` |
 | `--fade MS` | `0` | Fade in/out at each cut |
 | `--smooth BEATS` | `17` | `export`: beats in the tempo smoothing window (`0` = none) |
+| `--reaper` | off | `export`: also write `<name>.markers.lua` for REAPER project markers |
 | `-b, --bpm` | detected | Known tempo; narrows detection to ±10 % (all commands) |
 | `--hint` | `120` | Detection prior when `--bpm` is not given |
 

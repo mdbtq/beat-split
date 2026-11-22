@@ -242,6 +242,16 @@ class TempoMapTest(unittest.TestCase):
         self.assertAlmostEqual(bar_start[0], beats[2], delta=1e-4)
         self.assertEqual(bar_start[1] % (ppq // 4), 0)
 
+    def test_reaper_script_places_markers_like_the_tempo_map(self):
+        beats = np.arange(0.25, 20.25, 0.5)
+        m = self.beat_map(beats, sections=(8, 24))
+        _, smoothed = tempomap.export(m, smooth=0)
+        script = tempomap.reaper_script(m, smoothed)
+        self.assertIn("reaper.AddProjectMarker(0, false, offset + m[1], 0, m[2], -1)", script)
+        self.assertIn('{0.250000, "Section 1 (beat 1)"},', script)
+        self.assertIn('{4.250000, "Section 2 (beat 9)"},', script)
+        self.assertIn('{12.250000, "Section 3 (beat 25)"},', script)
+
     def test_smoothing_keeps_steady_tempo_steady(self):
         rng = np.random.default_rng(0)
         grid = np.arange(1.0, 101.0, 0.375)                                  # 160 BPM
@@ -319,3 +329,8 @@ class CliTest(unittest.TestCase):
         self.assertIn("tempo map", out)
         ppq, events = read_midi(mid.read_bytes())
         self.assertTrue(any(kind == 0x51 for _, _, kind, _ in events))
+
+    def test_export_reaper_writes_marker_script(self):
+        out = self.run_cli("export", self.src, "--reaper")
+        self.assertTrue((self.dir / "loop.markers.lua").exists())
+        self.assertIn("REAPER project markers", out)

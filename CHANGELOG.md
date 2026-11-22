@@ -4,6 +4,13 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-11-22
+
+### Added
+- `export --reaper`: also writes `<name>.markers.lua`, a ReaScript that adds
+  the section markers as REAPER project markers (REAPER keeps a MIDI file's
+  markers inside the MIDI item), relative to the selected item's start.
+
 ## [0.4.0] - 2026-11-22
 
 ### Added

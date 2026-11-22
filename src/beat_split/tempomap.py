@@ -5,11 +5,17 @@ grid follows a track that was not recorded to a click.
 The tick of each beat is fixed (one quarter note per beat); the tempo between
 two beats makes that tick land on the beat's time in the audio. Beat times are
 smoothed first (bpm-lock's robust local fit) so detection jitter does not make
-the grid wobble; the first downbeat keeps its detected time. Audio before the first downbeat becomes a pickup bar of
-sixteenth notes, so bar 2 starts exactly on the downbeat.
+the grid wobble; the first downbeat keeps its detected time. Audio before
+the first downbeat becomes a pickup bar of sixteenth notes, so bar 2 starts
+exactly on the downbeat.
+
+DAWs that import MIDI markers only into the MIDI item (REAPER does) get the
+same markers from `reaper_script`: a ReaScript that adds them as project
+markers.
 """
 from __future__ import annotations
 
+import json
 import struct
 from dataclasses import dataclass
 
@@ -21,7 +27,7 @@ from .beatmap import BeatMap
 PPQ = 960                 # ticks per quarter note
 MIN_LEAD_IN = 0.001       # seconds; a shorter lead-in is dropped (beat 1 at tick 0)
 MAX_TEMPO_US = 0xFFFFFF   # largest tempo a MIDI tempo event can hold (µs per quarter)
-SMOOTH_BEATS = 17       # beats in the smoothing window (about 4 bars)
+SMOOTH_BEATS = 17        # beats in the smoothing window (about 4 bars)
 
 
 @dataclass(frozen=True)
@@ -58,6 +64,15 @@ def _marker(tick: int, text: str) -> Event:
     return Event(tick, 2, _meta(0x06, text.encode("ascii", "replace")))
 
 
+def marker_beats(m: BeatMap) -> list[int]:
+    """0-based beats that get a marker: the downbeat and each later section start."""
+    return [m.downbeat] + [s for s in m.sections if s > m.downbeat]
+
+
+def marker_name(n: int, beat: int) -> str:
+    return f"Section {n} (beat {beat + 1})"
+
+
 def smoothed_beats(m: BeatMap, window: int = SMOOTH_BEATS) -> np.ndarray:
     return robust_smooth(m.beats, window) if window > 0 else m.beats.copy()
 
@@ -87,9 +102,8 @@ def build(m: BeatMap, smooth: int = SMOOTH_BEATS) -> tuple[list[Event], np.ndarr
 
     for i in range(first, len(beats) - 1):
         events.append(_tempo(tick + (i - first) * PPQ, beats[i + 1] - beats[i]))
-    starts = [first] + [s for s in m.sections if s > first]
-    for n, s in enumerate(starts, 1):
-        events.append(_marker(tick + (s - first) * PPQ, f"Section {n} (beat {s + 1})"))
+    for n, s in enumerate(marker_beats(m), 1):
+        events.append(_marker(tick + (s - first) * PPQ, marker_name(n, s)))
 
     # collapse tempo events that repeat the previous value
     out: list[Event] = []
@@ -118,3 +132,26 @@ def write(events: list[Event], end_tick: int, name: str) -> bytes:
 def export(m: BeatMap, smooth: int = SMOOTH_BEATS) -> tuple[bytes, np.ndarray]:
     events, beats = build(m, smooth)
     return write(events, max(e.tick for e in events) + PPQ, m.source), beats
+
+
+def reaper_script(m: BeatMap, beats: np.ndarray) -> str:
+    """ReaScript (Lua) adding the section markers as REAPER project markers at the
+    times the tempo map gives them, offset by the selected item's position."""
+    rows = "\n".join(f"  {{{beats[s]:.6f}, {json.dumps(marker_name(n, s))}}},"
+                      for n, s in enumerate(marker_beats(m), 1))
+    return f"""-- beat-split: section markers for {json.dumps(m.source)}
+-- Run in REAPER: Actions > Show action list > New action > Load ReaScript.
+-- Select the audio item first: markers are placed relative to its start
+-- (without a selection, relative to the start of the project).
+local markers = {{
+{rows}
+}}
+local item = reaper.GetSelectedMediaItem(0, 0)
+local offset = item and reaper.GetMediaItemInfo_Value(item, "D_POSITION") or 0
+reaper.Undo_BeginBlock()
+for _, m in ipairs(markers) do
+  reaper.AddProjectMarker(0, false, offset + m[1], 0, m[2], -1)
+end
+reaper.Undo_EndBlock("beat-split: section markers", -1)
+reaper.UpdateArrange()
+"""

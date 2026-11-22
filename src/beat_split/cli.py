@@ -177,10 +177,14 @@ def _export_one(path: Path, args) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(data)
     bpm = 60 / np.diff(beats[beat_map.downbeat:])
-    markers = 1 + sum(s > beat_map.downbeat for s in beat_map.sections)
+    markers = len(tempomap.marker_beats(beat_map))
     print(f"{path.name}: tempo map {bpm.min():.1f}-{bpm.max():.1f} BPM over "
           f"{len(beats) - beat_map.downbeat} beats, bars of {beat_map.bar} from beat "
           f"{beat_map.downbeat + 1}, {markers} section markers -> {out}")
+    if args.reaper:
+        script = out.with_name(f"{path.stem}.markers.lua")
+        script.write_text(tempomap.reaper_script(beat_map, beats))
+        print(f"  REAPER project markers: {script}")
 
 
 def cmd_export(args) -> int:
@@ -247,6 +251,9 @@ def build_parser() -> argparse.ArgumentParser:
     ex.add_argument("--smooth", type=int, default=tempomap.SMOOTH_BEATS, metavar="BEATS",
                     help="beats in the tempo smoothing window (default 17; 0 = follow every "
                          "detected beat, including its jitter)")
+    ex.add_argument("--reaper", action="store_true",
+                    help="also write <name>.markers.lua, a ReaScript that adds the section "
+                         "markers as REAPER project markers")
     _add_tracking(ex)
     ex.set_defaults(func=cmd_export)
     return parser
