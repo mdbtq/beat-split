@@ -13,7 +13,7 @@ import numpy as np
 from bpm_lock import audio_io
 from bpm_lock.audio_io import Audio
 
-from beat_split import beatmap, sections, splitter
+from beat_split import beatmap, sections, splitter, tempomap
 from beat_split.cli import main
 
 SR = 44100
@@ -170,6 +170,87 @@ class BeatMapTest(unittest.TestCase):
                                        "beats": [0.5, 1.0]})
 
 
+
+def read_midi(data: bytes) -> tuple[int, list[tuple[float, int, int, bytes]]]:
+    """Minimal type 0 reader: (ppq, [(seconds, tick, meta type, payload)])."""
+    assert data[:4] == b"MThd"
+    fmt, ntracks, ppq = int.from_bytes(data[8:10], "big"), int.from_bytes(data[10:12], "big"), \
+        int.from_bytes(data[12:14], "big")
+    assert (fmt, ntracks) == (0, 1) and data[14:18] == b"MTrk"
+    pos, end = 22, 22 + int.from_bytes(data[18:22], "big")
+
+    def varlen() -> int:
+        nonlocal pos
+        value = 0
+        while True:
+            byte = data[pos]
+            pos += 1
+            value = (value << 7) | (byte & 0x7F)
+            if byte < 0x80:
+                return value
+
+    events, tick, seconds, tempo = [], 0, 0.0, 500000
+    while pos < end:
+        delta = varlen()
+        seconds += delta * tempo / ppq / 1e6
+        tick += delta
+        assert data[pos] == 0xFF
+        kind = data[pos + 1]
+        pos += 2
+        length = varlen()
+        payload = data[pos:pos + length]
+        pos += length
+        if kind == 0x51:
+            tempo = int.from_bytes(payload, "big")
+        events.append((seconds, tick, kind, payload))
+    return ppq, events
+
+
+class TempoMapTest(unittest.TestCase):
+    def beat_map(self, beats, **kw) -> beatmap.BeatMap:
+        beats = np.asarray(beats, dtype=float)
+        return beatmap.BeatMap("song.wav", float(beats[-1]) + 1, 120.0, beats,
+                               np.ones(len(beats), bool), **kw)
+
+    def beat_seconds(self, data: bytes) -> tuple[int, dict[int, float]]:
+        ppq, events = read_midi(data)
+        return ppq, {tick: sec for sec, tick, _, _ in events}
+
+    def test_grid_lands_on_every_beat(self):
+        # drifting tempo, 0.3 s of audio before the first beat
+        intervals = 0.5 + 0.02 * np.sin(np.arange(40) / 5)
+        beats = 0.3 + np.concatenate([[0], np.cumsum(intervals)])
+        data, _ = tempomap.export(self.beat_map(beats, sections=(8,)), smooth=0)
+        ppq, events = read_midi(data)
+        signatures = [(tick, p[0], 2 ** p[1]) for _, tick, kind, p in events if kind == 0x58]
+        first = signatures[-1][0]
+        self.assertEqual(signatures[-1][1:], (4, 4))
+        self.assertEqual(signatures[0][2], 16)          # pickup bar in sixteenths
+        at = {tick: sec for sec, tick, _, _ in events}
+        for i, t in enumerate(beats[:-1]):
+            self.assertAlmostEqual(at[first + i * ppq], t, delta=1e-4)
+        markers = [(sec, p.decode()) for sec, _, kind, p in events if kind == 0x06]
+        self.assertEqual([name for _, name in markers],
+                         ["Section 1 (beat 1)", "Section 2 (beat 9)"])
+        self.assertAlmostEqual(markers[1][0], beats[8], delta=1e-4)
+
+    def test_downbeat_starts_the_bars(self):
+        beats = np.arange(0.5, 20.5, 0.5)
+        data, _ = tempomap.export(self.beat_map(beats, downbeat=2), smooth=0)
+        ppq, events = read_midi(data)
+        bar_start = [(sec, tick) for sec, tick, kind, p in events if kind == 0x58][-1]
+        self.assertAlmostEqual(bar_start[0], beats[2], delta=1e-4)
+        self.assertEqual(bar_start[1] % (ppq // 4), 0)
+
+    def test_smoothing_keeps_steady_tempo_steady(self):
+        rng = np.random.default_rng(0)
+        grid = np.arange(1.0, 101.0, 0.375)                                  # 160 BPM
+        beats = grid + rng.normal(0, 0.008, len(grid))                       # jittered
+        _, smoothed = tempomap.export(self.beat_map(np.sort(beats)))
+        bpm = 60 / np.diff(smoothed)
+        self.assertLess(np.percentile(bpm, 99) - np.percentile(bpm, 1), 4.0)
+
+
 @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg not installed")
 class CliTest(unittest.TestCase):
     def setUp(self):
@@ -230,3 +311,11 @@ class CliTest(unittest.TestCase):
         out = self.run_cli("split", self.src, "-n", 4, "--downbeat", 3)
         self.assertIn("beats 3-6", out)
         self.assertIn("bars of 4 from beat 3", out)
+
+    def test_export_writes_tempo_map(self):
+        out = self.run_cli("export", self.src)
+        mid = self.dir / "loop.tempo.mid"
+        self.assertTrue(mid.exists())
+        self.assertIn("tempo map", out)
+        ppq, events = read_midi(mid.read_bytes())
+        self.assertTrue(any(kind == 0x51 for _, _, kind, _ in events))

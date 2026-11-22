@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-11-22
+
+### Added
+- `beat-split export`: writes `<name>.tempo.mid`, a MIDI tempo map with a
+  tempo change on every beat (smoothed over `--smooth` beats, default 17), the
+  time signature, a pickup bar for the audio before the first downbeat, and a
+  marker at the downbeat and at each section start, so a DAW's grid follows the
+  recording.
+
 ## [0.3.1] - 2026-11-22
 
 ### Fixed

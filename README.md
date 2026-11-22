@@ -5,7 +5,8 @@ phrases, 16-bar sections. It detects every beat first and stores them in a beat
 map, so the intro, fills and breaks can be checked before cutting, and one map
 can be applied to the stems of the analysed mix. Where a new section starts
 after a break or an interlude that does not fill a whole chunk, the count
-restarts there by itself.
+restarts there by itself. The same beat map can be exported as a MIDI tempo map with
+section markers, so a DAW's grid follows the recording.
 
 Beat tracking comes from [bpm-lock](https://github.com/mdbtq/bpm-lock).
 
@@ -18,10 +19,10 @@ Beat tracking comes from [bpm-lock](https://github.com/mdbtq/bpm-lock).
 ## Install
 
 ```bash
-uv tool install git+https://github.com/mdbtq/beat-split@v0.3.1
+uv tool install git+https://github.com/mdbtq/beat-split@v0.4.0
 ```
 
-Or with pipx: `pipx install git+https://github.com/mdbtq/beat-split@v0.3.1`.
+Or with pipx: `pipx install git+https://github.com/mdbtq/beat-split@v0.4.0`.
 From a local checkout: `make build/install`.
 
 ## Usage
@@ -33,10 +34,11 @@ beat-split analyze track.wav --downbeat 3     # beat 1 is a pickup: bars start o
 beat-split split track.wav -n 16 -s 1 -s 0:42.3   # restart the count by hand
 beat-split split track.wav -n 16 --no-sections     # count straight through
 beat-split split stems/*.wav -n 16 -m track.wav.beats.json   # stems, cut like the mix
+beat-split export track.wav                   # MIDI tempo map + section markers for a DAW
 ```
 
-`split` uses `<file>.beats.json` when it exists and analyses the file first
-when it does not (`--reanalyze` forces a new analysis).
+`split` and `export` use `<file>.beats.json` when it exists and analyse the
+file first when it does not (`--reanalyze` forces a new analysis).
 
 ### 1. Analyse
 
@@ -98,6 +100,31 @@ track.wav: 54 chunks of 16 beats -> track_beats16
 - Without `--fade` the chunks join back into the original sample for sample.
   `--fade MS` adds a short fade at each cut, for playing chunks on their own.
 
+### 3. Export a tempo map
+
+```
+track.wav: tempo map 156.9-161.6 BPM over 790 beats, bars of 4 from beat 1, 8 section markers -> track.tempo.mid
+```
+
+`export` writes `<name>.tempo.mid`: a MIDI file without notes that holds a
+tempo change on every beat, the time signature, and a marker at the downbeat
+and at every section start (`Section 3 (beat 73)`). Imported into a DAW at the
+start of the project, with the audio also at the start, its grid follows the
+recording: bar lines on the downbeats, without stretching the audio. Use it
+for a track that was not recorded to a click, or to get the section markers.
+
+- Beat times are smoothed over 17 beats (`--smooth`) before the tempo is
+  derived, so the beat detection's jitter does not make the grid wobble while
+  real drift is kept. On the example the grid lies within 5 ms of the detected
+  beats (median), 15 ms at the 95th percentile. Lower `--smooth` for music
+  with sudden tempo changes; `--smooth 0` puts every detected beat on the grid,
+  jitter included.
+- Audio before the first downbeat becomes a pickup bar of sixteenth notes
+  (`1/16` in the example, 0.1 s), so bar 2 starts exactly on the downbeat.
+- DAWs import a tempo map from a MIDI file in different ways (REAPER, Logic
+  and Cubase can). Check that the grid follows the audio after importing, and
+  whether the markers arrive as project markers.
+
 ### Section starts
 
 Breaks and interludes do not always last a whole number of chunks. In the
@@ -150,15 +177,16 @@ tempo with bpm-lock first and split its output.
 |---|---|---|
 | `-n, --beats` | – | Beats per chunk (required for `split`) |
 | `-s, --start BEAT\|TIME` | downbeat | Beat to start counting from; repeat to restart the count |
-| `--downbeat BEAT` | `1` | First downbeat: start of the bar grid and of the count (`analyze` and `split`) |
-| `--bar BEATS` | `4` | Beats per bar for placing section starts (`analyze` and `split`) |
+| `--downbeat BEAT` | `1` | First downbeat: start of the bar grid and of the count (all commands) |
+| `--bar BEATS` | `4` | Beats per bar for placing section starts (all commands) |
 | `--no-sections` | off | Ignore detected section starts; count straight through |
-| `-m, --map FILE` | `<file>.beats.json` | Beat map to use for all files |
-| `--reanalyze` | off | Analyse again even if a beat map exists |
-| `-o, --out-dir` | `<name>_beats<N>` next to the input | Output folder (one subfolder per file when several are given) |
+| `-m, --map FILE` | `<file>.beats.json` | Beat map to use for all files (`split`, `export`) |
+| `--reanalyze` | off | Analyse again even if a beat map exists (`split`, `export`) |
+| `-o, --out-dir` | next to the input | Output folder. `split`: `<name>_beats<N>` by default, one subfolder per file when several are given |
 | `-f, --format` | as input | `wav`, `flac`, `aiff`, `mp3`, `m4a`, `ogg` |
 | `--fade MS` | `0` | Fade in/out at each cut |
-| `-b, --bpm` | detected | Known tempo; narrows detection to ±10 % (`analyze` and `split`) |
+| `--smooth BEATS` | `17` | `export`: beats in the tempo smoothing window (`0` = none) |
+| `-b, --bpm` | detected | Known tempo; narrows detection to ±10 % (all commands) |
 | `--hint` | `120` | Detection prior when `--bpm` is not given |
 
 ## Architecture
@@ -166,7 +194,8 @@ tempo with bpm-lock first and split its output.
 ```
 cli ─► beatmap.analyse ─► bpm_lock.beats (tracker) + attack_offset
     │                    └► sections.detect (beat novelty + lift)     → BeatMap ⇄ JSON
-    └► splitter.plan (beats, starts, size → chunks) ─► splitter.cut ─► bpm_lock.audio_io
+    ├► splitter.plan (beats, starts, size → chunks) ─► splitter.cut ─► bpm_lock.audio_io
+    └► tempomap.export (smoothed beats → tempo, time signature, markers) ─► .tempo.mid
 ```
 
 ## Notes
@@ -188,7 +217,8 @@ cli ─► beatmap.analyse ─► bpm_lock.beats (tracker) + attack_offset
 make test/all
 ```
 
-Chunk planning, lossless cutting, bar-line placement, a synthetic drum track
+Chunk planning, lossless cutting, bar-line placement, a tempo map read back
+beat by beat (within 0.1 ms), a synthetic drum track
 on which every cut must land within 15 ms before its attack, and one with a
 6-beat interlude whose section start after a 2-beat drum lead-in must be found
 on the exact bar line. The CLI tests need ffmpeg.

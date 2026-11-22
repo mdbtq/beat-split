@@ -6,9 +6,11 @@ import re
 import sys
 from pathlib import Path
 
+import numpy as np
+
 from bpm_lock import audio_io
 
-from . import __version__, beatmap, splitter
+from . import __version__, beatmap, splitter, tempomap
 from .beatmap import BeatMap
 
 FORMATS = ("wav", "flac", "aiff", "mp3", "m4a", "ogg")
@@ -168,6 +170,30 @@ def cmd_split(args) -> int:
     return 1 if failed else 0
 
 
+def _export_one(path: Path, args) -> None:
+    beat_map = _map_for(path, args)
+    data, beats = tempomap.export(beat_map, args.smooth)
+    out = (args.out_dir or path.parent) / f"{path.stem}.tempo.mid"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(data)
+    bpm = 60 / np.diff(beats[beat_map.downbeat:])
+    markers = 1 + sum(s > beat_map.downbeat for s in beat_map.sections)
+    print(f"{path.name}: tempo map {bpm.min():.1f}-{bpm.max():.1f} BPM over "
+          f"{len(beats) - beat_map.downbeat} beats, bars of {beat_map.bar} from beat "
+          f"{beat_map.downbeat + 1}, {markers} section markers -> {out}")
+
+
+def cmd_export(args) -> int:
+    failed = 0
+    for path in args.files:
+        try:
+            _export_one(path, args)
+        except Exception as exc:  # report and continue with the next file
+            print(f"{path}: {exc}", file=sys.stderr)
+            failed += 1
+    return 1 if failed else 0
+
+
 def _add_tracking(p: argparse.ArgumentParser) -> None:
     p.add_argument("-b", "--bpm", type=float, help="known tempo; narrows detection to ±10%%")
     p.add_argument("--hint", type=float, default=120.0,
@@ -210,6 +236,19 @@ def build_parser() -> argparse.ArgumentParser:
                     help="fade in/out at each cut (default 0: chunks join back losslessly)")
     _add_tracking(sp)
     sp.set_defaults(func=cmd_split)
+
+    ex = sub.add_parser("export", help="write a MIDI tempo map with section markers for a DAW")
+    ex.add_argument("files", nargs="+", type=Path)
+    ex.add_argument("-m", "--map", type=Path, help="beat map to use instead of <file>.beats.json")
+    ex.add_argument("--reanalyze", action="store_true",
+                    help="track again even if <file>.beats.json exists")
+    ex.add_argument("-o", "--out-dir", type=Path,
+                    help="output folder (default: next to the input, <name>.tempo.mid)")
+    ex.add_argument("--smooth", type=int, default=tempomap.SMOOTH_BEATS, metavar="BEATS",
+                    help="beats in the tempo smoothing window (default 17; 0 = follow every "
+                         "detected beat, including its jitter)")
+    _add_tracking(ex)
+    ex.set_defaults(func=cmd_export)
     return parser
 
 
