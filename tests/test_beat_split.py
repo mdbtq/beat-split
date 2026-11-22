@@ -124,16 +124,15 @@ class SectionTest(unittest.TestCase):
         self.assertEqual(chunks[4].first_beat, 41)
 
     def test_snaps_to_nearest_bar_line(self):
-        loud = np.ones((40, 3))
-        loud[:28] = 0.0                                            # full from beat 29 on
-        self.assertEqual(sections.snap_to_bar(29, loud, 0, 4), 28)    # one past a bar line
-        self.assertEqual(sections.snap_to_bar(31, loud, 0, 4), 32)    # one before
-        self.assertEqual(sections.snap_to_bar(30, loud, 2, 4), 30)    # on the bar from beat 3
-        # halfway: the later bar line (lead-in), unless the music is already full there
-        self.assertEqual(sections.snap_to_bar(30, loud, 0, 4), 28)
-        rising = np.zeros((40, 3))
-        rising[32:] = 1.0
-        self.assertEqual(sections.snap_to_bar(30, rising, 0, 4), 32)
+        self.assertEqual(sections.snap_to_bar(29, 40, 0, 4), 28)   # one past a bar line
+        self.assertEqual(sections.snap_to_bar(31, 40, 0, 4), 32)   # one before
+        self.assertEqual(sections.snap_to_bar(30, 40, 0, 4), 32)   # halfway: later (lead-in)
+        self.assertEqual(sections.snap_to_bar(30, 40, 2, 4), 30)   # on the bar from beat 3
+        self.assertEqual(sections.snap_to_bar(38, 40, 0, 4), 36)   # no bar line left after it
+        # halfway, worked back from the next section start: whole phrases must fit
+        self.assertEqual(sections.snap_to_bar(30, 100, 0, 4, next_start=44, phrase=16), 28)
+        self.assertEqual(sections.snap_to_bar(30, 100, 0, 4, next_start=64, phrase=16), 32)
+        self.assertEqual(sections.snap_to_bar(30, 100, 0, 4, next_start=42, phrase=16), 32)
 
     def test_steady_track_has_no_sections(self):
         audio, _ = drum_track()

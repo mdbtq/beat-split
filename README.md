@@ -116,12 +116,15 @@ exact beat is hard to pin down.
 
 That change often begins with a drum lead-in, a beat or two before the
 section's first downbeat. Sections start on a bar line, so the detected beat
-is moved to the nearest bar line of the bar grid. One halfway between two bar
-lines goes to the later one, so the lead-in stays at the end of the chunk
-before, unless the beats after the later bar line are not fuller than those
-before it (the change already happened at the earlier one). As a result, a
-section that starts off the bar grid, after an odd bar, is not found: restart
-the count there with `--start`.
+is moved to the nearest bar line of the bar grid. For one halfway between two
+bar lines, the count is worked back from the next section start: the bar line
+from which a whole number of 4-bar phrases (16 beats in 4/4) fits up to it
+wins. In the example, a chorus whose drums wait one phrase is detected at beat
+639; from 641 the count reaches the next section start (689) in exactly 3
+phrases, from 637 it does not, so the chorus starts at 641. Without a next
+section start to work back from, the later bar line wins, so a lead-in stays
+at the end of the chunk before. As a result, a section that starts off the bar
+grid, after an odd bar, is not found: restart the count there with `--start`.
 
 Check the result by ear. Remove a wrong section start from `sections` in the
 beat map, or add a missed one, and split again. `--no-sections` ignores them all.

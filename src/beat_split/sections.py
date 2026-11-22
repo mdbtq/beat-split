@@ -11,11 +11,13 @@ hit followed by silence, and their exact beat is hard to pin down.
 The novelty peak itself is not always the section's first beat: a drum
 lead-in into the section is already a texture change, so the peak can land on
 the lead-in. Sections start on a bar line, so each start is moved to the
-nearest bar line, counted from the first downbeat. A peak halfway between two
-bar lines is typically a lead-in, so it goes to the later one, unless the
-beats after that one are not fuller than those before it: then the change
-already happened at the earlier bar line. A section start off the bar grid
-(an odd bar) is therefore never found; restart the count by hand there.
+nearest bar line, counted from the first downbeat. For a peak halfway between
+two bar lines, the count is worked back from the next section start: the bar
+line from which a whole number of phrases (4 bars) fits up to it wins. Starts
+are resolved from the end of the track, so the next one is already placed.
+Without that evidence the later bar line wins, as the peak is typically a
+lead-in (drums, or stabs at the end of a break). A section start off the bar
+grid (an odd bar) is never found; restart the count by hand there.
 """
 from __future__ import annotations
 
@@ -30,6 +32,7 @@ PEAK_RADIUS = 4        # a candidate must be the novelty maximum within ± this 
 PEAK_MADS = 4.0        # ... and stand this many median absolute deviations above the median
 MIN_NOVELTY = 0.5      # ... and above this, so a very repetitive track yields nothing
 MIN_LIFT = 0.3         # log10 energy units (3 dB) the beats after must exceed those before
+PHRASE_BARS = 4        # bars per phrase, for working a start back from the next one
 
 
 def beat_features(audio: Audio, beats: np.ndarray) -> np.ndarray:
@@ -68,12 +71,14 @@ def section_starts(features: np.ndarray, downbeat: int = 0, bar: int = 4) -> lis
     nov = novelty(features, side)
     median = np.median(nov)
     threshold = max(MIN_NOVELTY, median + PEAK_MADS * np.median(np.abs(nov - median)))
-    starts = []
-    for i in range(side, len(features) - side):
-        if nov[i] < threshold or nov[i] < nov[max(0, i - PEAK_RADIUS):i + PEAK_RADIUS + 1].max():
-            continue
-        if lift(features, i) >= MIN_LIFT:
-            starts.append(snap_to_bar(i, features, downbeat, bar))
+    peaks = [i for i in range(side, len(features) - side)
+             if nov[i] >= threshold
+             and nov[i] >= nov[max(0, i - PEAK_RADIUS):i + PEAK_RADIUS + 1].max()
+             and lift(features, i) >= MIN_LIFT]
+    starts: list[int] = []
+    for i in reversed(peaks):   # from the end, so the next start is already placed
+        nxt = starts[-1] if starts else None
+        starts.append(snap_to_bar(i, len(features), downbeat, bar, nxt, bar * PHRASE_BARS))
     return sorted(set(starts))
 
 
@@ -82,18 +87,20 @@ def lift(features: np.ndarray, beat: int, side: int = NOVELTY_BEATS) -> float:
     return float(features[beat:beat + side].mean() - features[max(0, beat - side):beat].mean())
 
 
-def snap_to_bar(beat: int, features: np.ndarray, downbeat: int, bar: int) -> int:
-    """Move a section start to the nearest bar line (see the module docstring)."""
+def snap_to_bar(beat: int, n_beats: int, downbeat: int, bar: int,
+                next_start: int | None = None, phrase: int = 16) -> int:
+    """Move a section start to the nearest bar line. Halfway between two, take
+    the one a whole number of phrases before `next_start`, else the later one."""
     earlier = beat - (beat - downbeat) % bar
     later = earlier + bar
-    if earlier == beat or later >= len(features):
+    if earlier == beat or later >= n_beats:
         return earlier
-    if 2 * (beat - earlier) < bar:
-        return earlier
-    if 2 * (beat - earlier) > bar:
-        return later
-    if lift(features, later) <= 0 < lift(features, earlier):
-        return earlier
+    if 2 * (beat - earlier) != bar:
+        return earlier if 2 * (beat - earlier) < bar else later
+    if next_start is not None:
+        fits = [c for c in (later, earlier) if (next_start - c) % phrase == 0]
+        if len(fits) == 1:
+            return fits[0]
     return later
 
 

@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] - 2026-11-22
+
+### Fixed
+- A section start halfway between two bar lines is worked back from the next
+  section start: the bar line from which a whole number of 4-bar phrases fits
+  up to it wins (later bar line otherwise). It used to fall back to the earlier
+  bar line whenever the music was already full there, which put a chorus whose
+  drums come in later 4 beats too early. Maps from 0.3.0 keep their old
+  section starts until analysed again (`--reanalyze`).
+
 ## [0.3.0] - 2026-11-22
 
 ### Added
