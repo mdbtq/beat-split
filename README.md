@@ -4,8 +4,8 @@ Splits audio tracks into chunks of a fixed number of beats: bars, 4-bar
 phrases, 16-bar sections. It detects every beat first and stores them in a beat
 map, so the intro, fills and breaks can be checked before cutting, and one map
 can be applied to the stems of the analysed mix. Where a new section starts
-after a break or an interlude of an odd number of beats, the count restarts
-there by itself.
+after a break or an interlude that does not fill a whole chunk, the count
+restarts there by itself.
 
 Beat tracking comes from [bpm-lock](https://github.com/mdbtq/bpm-lock).
 
@@ -13,14 +13,16 @@ Beat tracking comes from [bpm-lock](https://github.com/mdbtq/bpm-lock).
 
 - Python ≥ 3.10 (numpy, scipy and bpm-lock are installed automatically)
 - `ffmpeg` / `ffprobe` on PATH (decoding/encoding any format)
+- [uv](https://docs.astral.sh/uv/) for the install commands below (or pipx)
 
 ## Install
 
 ```bash
-uv tool install git+https://github.com/mdbtq/beat-split@v0.2.0
+uv tool install git+https://github.com/mdbtq/beat-split@v0.3.1
 ```
 
-Or from a local checkout: `make build/install`.
+Or with pipx: `pipx install git+https://github.com/mdbtq/beat-split@v0.3.1`.
+From a local checkout: `make build/install`.
 
 ## Usage
 
@@ -186,9 +188,10 @@ cli ─► beatmap.analyse ─► bpm_lock.beats (tracker) + attack_offset
 make test/all
 ```
 
-Chunk planning, lossless cutting, a synthetic drum track on which every cut
-must land within 15 ms before its attack, and one with a 6-beat interlude whose
-re-entry after a 2-beat drum lead-in must be found on the exact bar line. The CLI tests need ffmpeg.
+Chunk planning, lossless cutting, bar-line placement, a synthetic drum track
+on which every cut must land within 15 ms before its attack, and one with a
+6-beat interlude whose section start after a 2-beat drum lead-in must be found
+on the exact bar line. The CLI tests need ffmpeg.
 
 ## License
 
